@@ -14,6 +14,131 @@
 	 */
 	let zoom = $state(500);
 
+	type flat<t> = { [k in keyof t]: t[k] } & {};
+
+	type EnumFromArgs<T extends string[]> = {
+		[K in keyof T as T[K] extends string ? T[K] : never]: K extends `${infer N extends number}`
+			? N
+			: never;
+	};
+
+	function Enum<T extends string[]>(...args: T): flat<EnumFromArgs<T>> {
+		return Object.fromEntries(args.map((arg, i) => [arg, i])) as flat<EnumFromArgs<T>>;
+	}
+
+	const clipType = Enum('video', 'text', 'audio', 'image', 'solid');
+	type ClipType = typeof clipType;
+
+	type Values<T> = T[keyof T];
+	interface BaseClip {
+		id: string;
+
+		type: Values<ClipType>;
+
+		sourceId?: string;
+
+		start: number;
+		duration: number;
+
+		offset: number;
+
+		layer?: number;
+
+		name?: string;
+		color?: string;
+
+		locked?: boolean;
+		hidden?: boolean;
+
+		muted?: boolean;
+
+		selected?: boolean;
+
+		transform?: {
+			x: number;
+			y: number;
+
+			scaleX: number;
+			scaleY: number;
+
+			rotation: number;
+
+			opacity: number;
+
+			anchorX: number;
+			anchorY: number;
+		};
+	}
+
+	interface VideoClip extends BaseClip {
+		type: ClipType['video'];
+		playbackRate?: number;
+
+		reverse?: boolean;
+
+		audioLinked?: string;
+	}
+	interface TextClip extends BaseClip {
+		type: ClipType['text'];
+
+		text: string;
+
+		fontFamily?: string;
+		fontSize?: number;
+
+		fontWeight?: number;
+
+		align?: 'left' | 'center' | 'right';
+
+		color?: string;
+
+		strokeColor?: string;
+		strokeWidth?: number;
+	}
+
+	interface AudioClip extends BaseClip {
+		type: ClipType['audio'];
+		gain?: number;
+
+		pan?: number;
+
+		speed?: number;
+	}
+	interface ImageClip extends BaseClip {
+		type: ClipType['image'];
+		objectFit?: 'contain' | 'cover' | 'stretch';
+
+		duration: number;
+	}
+	interface TextClip extends BaseClip {
+		type: ClipType['text'];
+	}
+	interface SolidClip extends BaseClip {
+		type: ClipType['solid'];
+
+		color: string;
+	}
+
+	type TimelineClip = VideoClip | AudioClip | ImageClip | TextClip | SolidClip;
+
+	interface MediaSource {
+		id: string;
+
+		type: 'video' | 'audio' | 'image' | 'subtitle';
+
+		name: string;
+
+		duration?: number;
+
+		width?: number;
+		height?: number;
+
+		frameRate?: number;
+		sampleRate?: number;
+
+		src: string;
+	}
+
 	let currentTimestamp = $state(0);
 	let speed = 1;
 	let playing = $state(false);
@@ -115,7 +240,6 @@
 		return best;
 	}
 	function curveZoomDelta(deltaY: number) {
-		// 1. Determine base sensitivity (adjust 0.001 to change overall feel)
 		const sensitivity = 0.002;
 
 		const zoomFactor = deltaY * zoom * sensitivity;
@@ -128,145 +252,137 @@
 	let userScrolling = $state(false);
 	let lastUserScrollTime = 0;
 
+	let lastLeft = 0;
+
 	function frame(dt?: number) {
 		if (!timelineContainer) return;
-		if (playing) if (dt) currentTimestamp += dt / 1000;
 
 		const scrollLeft = timelineContainer.scrollLeft;
 		const width = timelineContainer.clientWidth;
 		const rect = timelineContainer.getBoundingClientRect();
-
 		const contentWidth = timelineContainer.firstElementChild?.clientWidth ?? width;
-
 		const leftSeconds = Math.max(0, scrollLeft / zoom);
 		const rightSeconds = Math.min((scrollLeft + width) / zoom, contentWidth / zoom);
 
-		// wtf
 		if (rightSeconds <= leftSeconds) return;
 
-		ticks: {
-			const { step: minorScale, lastStep: hiddenScale } = chooseMinorScale(zoom);
-
-			const majorDivision = chooseMajorDivision(minorScale * zoom);
-
-			const majorScale = minorScale * majorDivision;
-
-			const startIndex = Math.floor(leftSeconds / hiddenScale) - 1;
-
-			const endIndex = Math.ceil(rightSeconds / hiddenScale) + 1;
-
-			const needsRecalc =
-				startIndex !== tickState.startIndex ||
-				endIndex !== tickState.endIndex ||
-				hiddenScale !== tickState.hiddenScale ||
-				majorScale !== tickState.majorScale ||
-				minorScale !== tickState.minorScale;
-
-			// console.log({minorScale, hiddenScale})
-			if (needsRecalc) {
-				tickState = {
-					startIndex,
-					endIndex,
-					hiddenScale,
-					majorScale,
-					minorScale
-				};
-				const visible = new Set<number>();
-
-				for (let i = startIndex; i <= endIndex; i++) {
-					const stamp = Number((i * hiddenScale).toFixed(6));
-
-					visible.add(stamp);
-
-					const major =
-						Math.round(stamp / majorScale) * majorScale === stamp && Math.round(stamp) === stamp;
-					const intermediate =
-						!major && Math.round(stamp / (minorScale * 4)) === stamp / (minorScale * 4);
-					const minor = Math.round(stamp / minorScale) * minorScale === stamp;
-
-					let tick = tickMap.get(stamp);
-					// if (!major && !minor ) console.log("SMALL")
-					if (!tick) {
-						tick = {
-							stamp,
-							state: major ? 'major' : intermediate ? 'intermediate' : minor ? 'minor' : 'hidden',
-							showStamp: intermediate || major
-						};
-
-						tickMap.set(stamp, tick);
-					} else {
-						tick.state = major
-							? 'major'
-							: intermediate
-								? 'intermediate'
-								: minor
-									? 'minor'
-									: 'hidden';
-						tick.showStamp = intermediate || major;
-					}
-				}
-
-				for (const [stamp] of tickMap) {
-					if (!visible.has(stamp)) {
-						tickMap.delete(stamp);
-					}
-				}
-				ticks = Array.from(tickMap.values()).sort((a, b) => a.stamp - b.stamp);
-			}
-		}
-		const now = performance.now();
-		if (now - lastUserScrollTime > 150) {
-			userScrolling = false;
-		}
-
 		const dtSeconds = dt ? dt / 1000 : 1 / 60;
+		updateFollowState(width, dtSeconds);
+
+		updateTicks(leftSeconds, rightSeconds);
+		updateUserScrollState();
 
 		if (playheadDragged) {
-			const edgeSize = 120;
-			const maxSpeed = 1600;
-
-			const localMouseX = mouseX - rect.left;
-
-			let velocity = 0;
-
-			if (localMouseX > width - edgeSize) {
-				const t = (localMouseX - (width - edgeSize)) / edgeSize;
-
-				velocity = t * maxSpeed;
-			} else if (localMouseX < edgeSize) {
-				const t = (edgeSize - localMouseX) / edgeSize;
-
-				velocity = -t * maxSpeed;
-			}
-
-			timelineContainer.scrollLeft += velocity * dtSeconds;
-
-			currentTimestamp = (localMouseX + timelineContainer.scrollLeft) / zoom;
+			handlePlayheadDrag(rect, width, dtSeconds);
 		}
 
 		if (playing && dt) {
 			currentTimestamp += (dt / 1000) * speed;
 		}
 
+		timelineContainerWidth = width;
+		playheadLeft = currentTimestamp * zoom - timelineContainer.scrollLeft;
+	}
+
+	function updateTicks(leftSeconds: number, rightSeconds: number) {
+		const { step: minorScale, lastStep: hiddenScale } = chooseMinorScale(zoom);
+		const majorDivision = chooseMajorDivision(minorScale * zoom);
+		const majorScale = minorScale * majorDivision;
+		const startIndex = Math.floor(leftSeconds / hiddenScale) - 1;
+		const endIndex = Math.ceil(rightSeconds / hiddenScale) + 1;
+
+		const needsRecalc =
+			startIndex !== tickState.startIndex ||
+			endIndex !== tickState.endIndex ||
+			hiddenScale !== tickState.hiddenScale ||
+			majorScale !== tickState.majorScale ||
+			minorScale !== tickState.minorScale;
+
+		if (!needsRecalc) return;
+
+		tickState = {
+			startIndex,
+			endIndex,
+			hiddenScale,
+			majorScale,
+			minorScale
+		};
+
+		const visible = new Set<number>();
+
+		for (let i = startIndex; i <= endIndex; i++) {
+			const stamp = Number((i * hiddenScale).toFixed(6));
+			visible.add(stamp);
+
+			const major =
+				Math.round(stamp / majorScale) * majorScale === stamp && Math.round(stamp) === stamp;
+			const intermediate =
+				!major && Math.round(stamp / (minorScale * 4)) === stamp / (minorScale * 4);
+			const minor = Math.round(stamp / minorScale) * minorScale === stamp;
+
+			let tick = tickMap.get(stamp);
+			if (!tick) {
+				tick = {
+					stamp,
+					state: major ? 'major' : intermediate ? 'intermediate' : minor ? 'minor' : 'hidden',
+					showStamp: intermediate || major
+				};
+				tickMap.set(stamp, tick);
+			} else {
+				tick.state = major ? 'major' : intermediate ? 'intermediate' : minor ? 'minor' : 'hidden';
+				tick.showStamp = intermediate || major;
+			}
+		}
+
+		for (const [stamp] of tickMap) {
+			if (!visible.has(stamp)) {
+				tickMap.delete(stamp);
+			}
+		}
+
+		ticks = Array.from(tickMap.values()).sort((a, b) => a.stamp - b.stamp);
+	}
+
+	function updateUserScrollState() {
+		const now = performance.now();
+		if (now - lastUserScrollTime > 150) {
+			userScrolling = false;
+		}
+	}
+
+	function handlePlayheadDrag(rect: DOMRect, width: number, dtSeconds: number) {
+		const edgeSize = 120;
+		const maxSpeed = 1600;
+		const localMouseX = mouseX - rect.left;
+		let velocity = 0;
+
+		if (localMouseX > width - edgeSize) {
+			const t = (localMouseX - (width - edgeSize)) / edgeSize;
+			velocity = t * maxSpeed;
+		} else if (localMouseX < edgeSize) {
+			const t = (edgeSize - localMouseX) / edgeSize;
+			velocity = -t * maxSpeed;
+		}
+
+		timelineContainer.scrollLeft += velocity * dtSeconds;
+		currentTimestamp = (localMouseX + timelineContainer.scrollLeft) / zoom;
+	}
+
+	function updateFollowState(width: number, dtSeconds: number) {
 		const maxScrollLeft = timelineContainer.scrollWidth - width;
-
 		const playheadWorldX = currentTimestamp * zoom;
-
 		const desiredScreenX = width * PlayheadScreenOffset;
-
 		const desiredScrollLeft = playheadWorldX - desiredScreenX;
-
+		const now = performance.now();
 		const shouldFollow = playing && !playheadDragged && now - lastUserScrollTime > FollowDelay;
 
 		followStrength = smoothDamp(followStrength, shouldFollow ? 1 : 0, dtSeconds, 10);
-
 		targetScrollLeft = smoothDamp(targetScrollLeft, desiredScrollLeft, dtSeconds, FollowSmoothing);
-
 		targetScrollLeft = Math.max(0, Math.min(maxScrollLeft, targetScrollLeft));
 
 		if (followStrength > 0.001) {
 			const current = timelineContainer.scrollLeft;
-
+			lastLeft = current;
 			timelineContainer.scrollLeft = smoothDamp(
 				current,
 				targetScrollLeft,
@@ -274,13 +390,6 @@
 				20 * followStrength
 			);
 		}
-
-		timelineContainerWidth = timelineContainer.clientWidth;
-		const followScreenX = timelineContainer.clientWidth * PlayheadScreenOffset;
-
-		const rawPlayheadLeft = currentTimestamp * zoom - timelineContainer.scrollLeft;
-
-		playheadLeft = false ? followScreenX : rawPlayheadLeft;
 	}
 
 	function smoothDamp(current: number, target: number, dt: number, speed: number) {
@@ -522,5 +631,3 @@
 		</Resizable.Pane>
 	</Resizable.PaneGroup>
 </div>
-
-{#snippet playhead(left: number, opacity = 100)}{/snippet}
