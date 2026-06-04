@@ -15,13 +15,18 @@
 	},
 	"devDependencies": {
 		"@fontsource-variable/inter": "^5.2.8",
-		"@lucide/svelte": "^1.16.0",
+		"@internationalized/date": "^3.12.1",
+		"@lucide/svelte": "^1.17.0",
 		"@sveltejs/adapter-node": "latest",
 		"@sveltejs/kit": "latest",
 		"@sveltejs/vite-plugin-svelte": "^7.0.0",
 		"@tailwindcss/forms": "^0.5.11",
 		"@tailwindcss/typography": "^0.5.19",
 		"@tailwindcss/vite": "^4.2.2",
+		"@types/node": "^25.9.1",
+		"@types/streamsaver": "^2.0.5",
+		"@types/wicg-file-system-access": "^2023.10.7",
+		"bits-ui": "^2.18.1",
 		"clsx": "^2.1.1",
 		"paneforge": "^1.0.2",
 		"prettier": "^3.8.1",
@@ -38,6 +43,12 @@
 		"vite": "^8.0.7"
 	},
 	"dependencies": {
-		"mode-watcher": "^1.1.0"
+		"@zip.js/zip.js": "^2.8.26",
+		"fflate": "^0.8.3",
+		"mediabunny": "^1.45.4",
+		"mode-watcher": "^1.1.0",
+		"mp4box": "^2.3.0",
+		"native-file-system-adapter": "^3.0.1",
+		"streamsaver": "^2.0.6"
 	}
 }

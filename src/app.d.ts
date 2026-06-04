@@ -8,6 +8,20 @@ declare global {
 		// interface PageState {}
 		// interface Platform {}
 	}
+	declare type Dimensions = {
+		width: number;
+		height: number;
+	};
+	declare type ClipBounds = {
+		left: {
+			px: number;
+			seconds: number;
+		};
+		right: {
+			px: number;
+			seconds: number;
+		};
+	};
 }
 
 export {};
