@@ -251,6 +251,8 @@ export async function render(
 		(p) => progress.setStep('audio', p)
 	);
 
+	let encodePromise: Promise<void> = Promise.resolve();
+
 	for (let frameIndex = startFrame ?? 0; frameIndex < (endFrame ?? totalFrames); frameIndex++) {
 		if (isCancelled?.()) {
 			renderLogger('cancelled');
@@ -276,9 +278,13 @@ export async function render(
 			});
 		}
 
-		await renderFrame(ctx, clips, timestamp, width, height, assetCache);
-
-		await videoSource.add((frameIndex - (startFrame ?? 0)) * frameDuration, frameDuration);
+		const maybePromise = renderFrame(ctx, clips, timestamp, width, height, assetCache);
+		if (maybePromise) await maybePromise;
+		await encodePromise;
+		encodePromise = videoSource.add(
+			(frameIndex - (startFrame ?? 0)) * frameDuration,
+			frameDuration
+		);
 	}
 	progress.setStep('video', 100);
 
@@ -293,14 +299,14 @@ export async function render(
 	});
 }
 
-async function renderFrame(
+function renderFrame(
 	ctx: OffscreenCanvasRenderingContext2D,
 	clips: TimelineClip[],
 	timestamp: number,
 	width: number,
 	height: number,
 	cache: AssetCache
-) {
+): Promise<void> | void {
 	ctx.clearRect(0, 0, width, height);
 
 	const active = clips
@@ -308,38 +314,66 @@ async function renderFrame(
 		.filter((c) => !c.hidden)
 		.sort((a, b) => a.track.localeCompare(b.track));
 
-	for (const clip of active) {
-		// videoFrameClipLogger('active clip', {
-		// 	id: clip.id,
-		// 	type: clip.type,
-		// 	track: clip.track
-		// });
-		ctx.save();
+	if (active.length === 0) return;
 
+	const hasVideoClips = active.some((c) => c.type === clipType.video);
+	if (!hasVideoClips) {
+		for (const clip of active) {
+			ctx.save();
+			const box = applyClipTransform(ctx, clip);
+			if (box) drawClipSync(ctx, clip, box.renderWidth, box.renderHeight, cache);
+			ctx.restore();
+		}
+		return;
+	}
+
+	return renderFrameAsync(ctx, active, timestamp, width, height, cache);
+}
+
+async function renderFrameAsync(
+	ctx: OffscreenCanvasRenderingContext2D,
+	active: TimelineClip[],
+	timestamp: number,
+	width: number,
+	height: number,
+	cache: AssetCache
+): Promise<void> {
+	for (const clip of active) {
+		ctx.save();
 		const box = applyClipTransform(ctx, clip);
 		if (!box) {
 			ctx.restore();
 			continue;
 		}
-
 		const { renderWidth, renderHeight } = box;
 
-		switch (clip.type) {
-			case clipType.solid:
-				drawSolid(ctx, clip as SolidClip, renderWidth, renderHeight);
-				break;
-			case clipType.image:
-				drawImage(ctx, clip as ImageClip, renderWidth, renderHeight, cache);
-				break;
-			case clipType.video:
-				await drawVideo(ctx, clip as VideoClip, timestamp, renderWidth, renderHeight, cache);
-				break;
-			case clipType.text:
-				drawText(ctx, clip as TextClip, renderWidth, renderHeight);
-				break;
+		if (clip.type === clipType.video) {
+			await drawVideo(ctx, clip as VideoClip, timestamp, renderWidth, renderHeight, cache);
+		} else {
+			drawClipSync(ctx, clip, renderWidth, renderHeight, cache);
 		}
-
 		ctx.restore();
+	}
+}
+
+// Handles all non-video clip types synchronously
+function drawClipSync(
+	ctx: OffscreenCanvasRenderingContext2D,
+	clip: TimelineClip,
+	renderWidth: number,
+	renderHeight: number,
+	cache: AssetCache
+) {
+	switch (clip.type) {
+		case clipType.solid:
+			drawSolid(ctx, clip as SolidClip, renderWidth, renderHeight);
+			break;
+		case clipType.image:
+			drawImage(ctx, clip as ImageClip, renderWidth, renderHeight, cache);
+			break;
+		case clipType.text:
+			drawText(ctx, clip as TextClip, renderWidth, renderHeight);
+			break;
 	}
 }
 
@@ -487,10 +521,17 @@ function drawBitmapFitted(
 }
 
 class VideoHandle {
+	private readonly BUFFER_SIZE = 4;
+
 	private iterator: AsyncIterator<VideoSample>;
-	private nextPromise: Promise<IteratorResult<VideoSample>>;
 	private current: VideoSample | null = null;
 	private currentTimestamp = -Infinity;
+
+	private buffer: VideoSample[] = [];
+	private iteratorDone = false;
+	private fillPromise: Promise<void> | null = null;
+
+	private generation = 0;
 
 	constructor(
 		private readonly asset: VideoClip['asset'],
@@ -499,7 +540,35 @@ class VideoHandle {
 	) {
 		const stream = this.sink.samples(0, this.asset.duration ?? Number.POSITIVE_INFINITY);
 		this.iterator = stream[Symbol.asyncIterator]();
-		this.nextPromise = this.iterator.next();
+		this.scheduleFill();
+	}
+
+	private scheduleFill() {
+		if (this.fillPromise || this.iteratorDone) return;
+		const gen = this.generation;
+		this.fillPromise = this.doFill(gen).finally(() => {
+			if (this.generation === gen) this.fillPromise = null;
+		});
+	}
+
+	private async doFill(gen: number) {
+		while (this.buffer.length < this.BUFFER_SIZE && !this.iteratorDone) {
+			if (this.generation !== gen) return;
+
+			const result = await this.iterator.next();
+
+			if (this.generation !== gen) {
+				(result.value as VideoSample | undefined)?.close?.();
+				return;
+			}
+
+			if (result.done || !result.value) {
+				this.iteratorDone = true;
+				break;
+			}
+
+			this.buffer.push(result.value);
+		}
 	}
 
 	async frameAt(time: number): Promise<VideoSample | null> {
@@ -508,35 +577,57 @@ class VideoHandle {
 		}
 
 		while (true) {
-			const result = await this.nextPromise;
-			if (result.done || !result.value) return this.current;
+			if (this.buffer.length > 0) {
+				const nextTs = this.buffer[0].timestamp ?? time;
 
-			const sample = result.value;
+				if (nextTs > time) {
+					this.scheduleFill();
+					return this.current;
+				}
 
-			if (this.current) this.current.close?.();
-			this.current = sample;
-			this.currentTimestamp = sample.timestamp ?? time;
-			this.nextPromise = this.iterator.next();
+				this.current?.close?.();
+				this.current = this.buffer.shift()!;
+				this.currentTimestamp = this.current.timestamp ?? time;
+				this.scheduleFill();
 
-			if (this.currentTimestamp >= time) return this.current;
+				if (this.currentTimestamp >= time) return this.current;
+				continue;
+			}
+
+			if (this.iteratorDone) return this.current;
+
+			if (!this.fillPromise) this.scheduleFill();
+			await this.fillPromise;
 		}
 	}
 
 	private reset(startTime: number) {
-		if (this.current) {
-			this.current.close?.();
-			this.current = null;
-		}
+		this.generation++;
+
+		this.current?.close?.();
+		this.current = null;
+		this.currentTimestamp = -Infinity;
+
+		for (const sample of this.buffer) sample.close?.();
+		this.buffer = [];
+
+		this.iteratorDone = false;
+		this.fillPromise = null;
 
 		const stream = this.sink.samples(startTime, this.asset.duration ?? Number.POSITIVE_INFINITY);
 		this.iterator = stream[Symbol.asyncIterator]();
-		this.nextPromise = this.iterator.next();
-		this.currentTimestamp = -Infinity;
+		this.scheduleFill();
 	}
 
 	dispose() {
+		this.generation++;
+
 		this.current?.close?.();
 		this.current = null;
+
+		for (const sample of this.buffer) sample.close?.();
+		this.buffer = [];
+
 		this.input.dispose?.();
 	}
 }
