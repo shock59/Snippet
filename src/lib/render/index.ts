@@ -25,7 +25,9 @@ import {
 	MovOutputFormat,
 	AudioBufferSink,
 	MkvOutputFormat,
-	WebMOutputFormat
+	WebMOutputFormat,
+	VideoSampleSink,
+	VideoSample
 } from 'mediabunny';
 import { defaultTransform } from '../../routes/editor/visibleClips';
 import { getAssetFile } from '$lib/media/assets';
@@ -261,10 +263,10 @@ export async function render(
 			'video',
 			(frameIndex - (startFrame ?? 0)) / ((endFrame ?? totalFrames) - (startFrame ?? 0))
 		);
-		videoFrameLogger('render frame', {
-			frameIndex,
-			timestamp
-		});
+		// videoFrameLogger('render frame', {
+		// 	frameIndex,
+		// 	timestamp
+		// });
 
 		if (frameIndex % fps === 0) {
 			videoLogger('render progress', {
@@ -307,11 +309,11 @@ async function renderFrame(
 		.sort((a, b) => a.track.localeCompare(b.track));
 
 	for (const clip of active) {
-		videoFrameClipLogger('active clip', {
-			id: clip.id,
-			type: clip.type,
-			track: clip.track
-		});
+		// videoFrameClipLogger('active clip', {
+		// 	id: clip.id,
+		// 	type: clip.type,
+		// 	track: clip.track
+		// });
 		ctx.save();
 
 		const box = applyClipTransform(ctx, clip);
@@ -358,13 +360,13 @@ function applyClipTransform(ctx: OffscreenCanvasRenderingContext2D, clip: Timeli
 	ctx.translate(-anchorX, -anchorY);
 	ctx.globalAlpha *= t.opacity;
 
-	videoFrameTransformsLogger('applied transform', {
-		x: t.x,
-		y: t.y,
-		width: renderWidth,
-		height: renderHeight,
-		rotation: t.rotation
-	});
+	// videoFrameTransformsLogger('applied transform', {
+	// 	x: t.x,
+	// 	y: t.y,
+	// 	width: renderWidth,
+	// 	height: renderHeight,
+	// 	rotation: t.rotation
+	// });
 
 	return { renderWidth, renderHeight };
 }
@@ -389,7 +391,7 @@ function drawImage(
 ) {
 	const bmp = cache.getBitmap(clip.assetId);
 	if (!bmp) return;
-	videoFrameDrawLogger('drawing image', { width, height });
+	// videoFrameDrawLogger('drawing image', { width, height });
 
 	const fit = clip.objectFit ?? 'stretch';
 	drawBitmapFitted(ctx, bmp, fit, width, height);
@@ -403,9 +405,7 @@ async function drawVideo(
 	height: number,
 	cache: AssetCache
 ) {
-	const video = cache.getVideo(clip.assetId);
-	if (!video) return;
-	videoFrameDrawLogger('drawing video', { width, height });
+	// videoFrameDrawLogger('drawing video', { width, height });
 
 	const localTime = timestamp - clip.start + (clip.startTrim ?? 0);
 	const rate = clip.playbackRate ?? 1;
@@ -413,10 +413,10 @@ async function drawVideo(
 		? (clip.asset.duration ?? 0) - localTime * rate
 		: localTime * rate;
 
-	video.currentTime = targetTime;
-	await new Promise((r) => video.addEventListener('seeked', r, { once: true }));
+	const sample = await cache.getVideo(clip.assetId, targetTime);
+	if (!sample) return;
 
-	drawBitmapFitted(ctx, video, 'stretch', width, height);
+	sample.draw(ctx, 0, 0, width, height);
 }
 
 function drawText(
@@ -486,9 +486,64 @@ function drawBitmapFitted(
 	ctx.drawImage(source, dx, dy, dw, dh);
 }
 
+class VideoHandle {
+	private iterator: AsyncIterator<VideoSample>;
+	private nextPromise: Promise<IteratorResult<VideoSample>>;
+	private current: VideoSample | null = null;
+	private currentTimestamp = -Infinity;
+
+	constructor(
+		private readonly asset: VideoClip['asset'],
+		private readonly input: Input,
+		private readonly sink: VideoSampleSink
+	) {
+		const stream = this.sink.samples(0, this.asset.duration ?? Number.POSITIVE_INFINITY);
+		this.iterator = stream[Symbol.asyncIterator]();
+		this.nextPromise = this.iterator.next();
+	}
+
+	async frameAt(time: number): Promise<VideoSample | null> {
+		if (this.current && time + 0.0001 < this.currentTimestamp) {
+			this.reset(time);
+		}
+
+		while (true) {
+			const result = await this.nextPromise;
+			if (result.done || !result.value) return this.current;
+
+			const sample = result.value;
+
+			if (this.current) this.current.close?.();
+			this.current = sample;
+			this.currentTimestamp = sample.timestamp ?? time;
+			this.nextPromise = this.iterator.next();
+
+			if (this.currentTimestamp >= time) return this.current;
+		}
+	}
+
+	private reset(startTime: number) {
+		if (this.current) {
+			this.current.close?.();
+			this.current = null;
+		}
+
+		const stream = this.sink.samples(startTime, this.asset.duration ?? Number.POSITIVE_INFINITY);
+		this.iterator = stream[Symbol.asyncIterator]();
+		this.nextPromise = this.iterator.next();
+		this.currentTimestamp = -Infinity;
+	}
+
+	dispose() {
+		this.current?.close?.();
+		this.current = null;
+		this.input.dispose?.();
+	}
+}
+
 class AssetCache {
 	private bitmaps = new Map<string, ImageBitmap>();
-	private videos = new Map<string, HTMLVideoElement>();
+	private videos = new Map<string, VideoHandle>();
 	private audioBuffers = new Map<string, AudioBuffer>();
 
 	async preload(clips: TimelineClip[], onProgress?: (progress01: number) => void) {
@@ -556,19 +611,21 @@ class AssetCache {
 						id: clip.assetId,
 						name: clip.asset.name
 					});
-					try {
-						const video = document.createElement('video');
-						video.src = clip.asset.objectUrl;
-						video.preload = 'auto';
-						video.muted = true;
 
-						await new Promise<void>((res, rej) => {
-							video.oncanplaythrough = () => res();
-							video.onerror = () => rej(new Error(`Video load failed: ${clip.assetId}`));
-							video.load();
+					try {
+						const input = new Input({
+							source: new BlobSource(await getAssetFile(clip.asset)),
+							formats: ALL_FORMATS
 						});
 
-						this.videos.set(clip.assetId, video);
+						const track = await input.getPrimaryVideoTrack();
+						if (!track) {
+							input.dispose?.();
+							throw new Error(`No video track found: ${clip.assetId}`);
+						}
+
+						const sink = new VideoSampleSink(track);
+						this.videos.set(clip.assetId, new VideoHandle(clip.asset, input, sink));
 
 						if (!this.audioBuffers.has(clip.assetId)) {
 							audioLogger('extracting video audio', {
@@ -589,9 +646,9 @@ class AssetCache {
 
 						videoLogger('video ready', {
 							id: clip.assetId,
-							duration: video.duration,
-							width: video.videoWidth,
-							height: video.videoHeight
+							duration: clip.asset.duration,
+							width: clip.asset.width,
+							height: clip.asset.height
 						});
 					} catch (e) {
 						videoLogger.error('video load failed', {
@@ -627,8 +684,10 @@ class AssetCache {
 		return this.bitmaps.get(assetId) ?? null;
 	}
 
-	getVideo(assetId: string) {
-		return this.videos.get(assetId) ?? null;
+	async getVideo(assetId: string, time: number) {
+		const video = this.videos.get(assetId);
+		if (!video) return null;
+		return await video.frameAt(time);
 	}
 
 	getAudioBuffer(assetId: string) {
@@ -638,7 +697,10 @@ class AssetCache {
 	dispose() {
 		for (const bmp of this.bitmaps.values()) bmp.close();
 		this.bitmaps.clear();
+
+		for (const video of this.videos.values()) video.dispose();
 		this.videos.clear();
+
 		this.audioBuffers.clear();
 	}
 }
