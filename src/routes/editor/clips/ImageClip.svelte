@@ -4,7 +4,7 @@
 	import type { ImageClip, TimelineClip, VideoClip } from '$lib/media/types';
 	import { onMount } from 'svelte';
 
-	type Props = { clip: ImageClip; inTimeline?: boolean; zoom?: number; bounds?: ClipBounds };
+	type Props = { clip: ImageClip; inTimeline?: boolean; zoom?: number; bounds?: ScreenBounds };
 	let { clip, inTimeline = false, bounds, zoom = 100 }: Props = $props();
 
 	onMount(async () => {
@@ -22,10 +22,7 @@ bounds.left.px = 60 : 0px
 -->
 	<div
 		style:margin-left="{Math.max(
-			bounds?.left.seconds !== undefined
-				? (bounds.left.seconds - clip.start) * zoom +
-						scalenum(bounds.left.px, 0, 0, 60, -60, true, 'linear')
-				: 0,
+			bounds !== undefined ? (bounds.leftSeconds - clip.start) * zoom : 0,
 			4
 		)}px"
 		class="flex h-full w-full items-center"
@@ -33,6 +30,7 @@ bounds.left.px = 60 : 0px
 		<div class="flex aspect-square h-full w-auto items-center justify-center py-0.5">
 			<img src={clip.asset?.previewUrl} alt="" class="h-full w-auto rounded-sm" />
 		</div>
+		{bounds?.leftSeconds}
 		<span
 			class="{!clip.name
 				? 'italic'

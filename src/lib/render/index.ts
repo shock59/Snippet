@@ -257,7 +257,10 @@ export async function render(
 		}
 
 		const timestamp = frameIndex * frameDuration;
-		progress.setStep('video', frameIndex - (startFrame ?? 0) / (endFrame ?? totalFrames));
+		progress.setStep(
+			'video',
+			(frameIndex - (startFrame ?? 0)) / ((endFrame ?? totalFrames) - (startFrame ?? 0))
+		);
 		videoFrameLogger('render frame', {
 			frameIndex,
 			timestamp
@@ -271,7 +274,7 @@ export async function render(
 			});
 		}
 
-		renderFrame(ctx, clips, timestamp, width, height, assetCache);
+		await renderFrame(ctx, clips, timestamp, width, height, assetCache);
 
 		await videoSource.add((frameIndex - (startFrame ?? 0)) * frameDuration, frameDuration);
 	}
@@ -288,7 +291,7 @@ export async function render(
 	});
 }
 
-function renderFrame(
+async function renderFrame(
 	ctx: OffscreenCanvasRenderingContext2D,
 	clips: TimelineClip[],
 	timestamp: number,
@@ -327,7 +330,7 @@ function renderFrame(
 				drawImage(ctx, clip as ImageClip, renderWidth, renderHeight, cache);
 				break;
 			case clipType.video:
-				drawVideo(ctx, clip as VideoClip, timestamp, renderWidth, renderHeight, cache);
+				await drawVideo(ctx, clip as VideoClip, timestamp, renderWidth, renderHeight, cache);
 				break;
 			case clipType.text:
 				drawText(ctx, clip as TextClip, renderWidth, renderHeight);
@@ -388,11 +391,11 @@ function drawImage(
 	if (!bmp) return;
 	videoFrameDrawLogger('drawing image', { width, height });
 
-	const fit = clip.objectFit ?? 'contain';
+	const fit = clip.objectFit ?? 'stretch';
 	drawBitmapFitted(ctx, bmp, fit, width, height);
 }
 
-function drawVideo(
+async function drawVideo(
 	ctx: OffscreenCanvasRenderingContext2D,
 	clip: VideoClip,
 	timestamp: number,
@@ -410,11 +413,10 @@ function drawVideo(
 		? (clip.asset.duration ?? 0) - localTime * rate
 		: localTime * rate;
 
-	if (Math.abs(video.currentTime - targetTime) > 0.04) {
-		video.currentTime = targetTime;
-	}
+	video.currentTime = targetTime;
+	await new Promise((r) => video.addEventListener('seeked', r, { once: true }));
 
-	drawBitmapFitted(ctx, video, 'contain', width, height);
+	drawBitmapFitted(ctx, video, 'stretch', width, height);
 }
 
 function drawText(

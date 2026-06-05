@@ -78,7 +78,7 @@
 	const tickLogger = editorLogger.child('ticks', {
 		color: '#262626'
 	});
-	
+
 	const clipLogger = editorLogger.child('clips', {
 		color: '#37515F'
 	});
@@ -97,7 +97,7 @@
 		height: 0
 	});
 
-	let length = $state(5);
+	let length = $state(66.1661);
 
 	let fps = $state(60);
 
@@ -389,10 +389,10 @@
 	}
 
 	function getTimestampAtMouse() {
-		return getTimestampScreenX($mouseX);
+		return getTimestampAtScreenX($mouseX);
 	}
 
-	function getTimestampScreenX(x: number) {
+	function getTimestampAtScreenX(x: number, updator?: any) {
 		const rect = timelineDiv.getBoundingClientRect();
 		const localX = x - rect.left;
 		return clamp(0, length, localX / zoom);
@@ -587,8 +587,8 @@
 	const clips: TimelineClip[] = $state([]);
 
 	const canvasDimensions: Dimensions = $state({
-		width: 1920,
-		height: 1080
+		width: 2176,
+		height: 1440
 	});
 	5;
 	let loading = $state(true);
@@ -702,6 +702,7 @@
 		width: number;
 		rotation: number;
 		floating: boolean;
+		opacity?: number;
 
 		rotateCenterX: number;
 		rotateCenterY: number;
@@ -710,7 +711,57 @@
 	// svelte made me do this
 	let draggedClipId: string | null = $state(null);
 
-	const pseudoClips: (typeof draggedClip)[] = $state([]);
+	const pseudoClips: Record<string, typeof draggedClip> = $state({});
+
+	function fadeClip(clip: typeof draggedClip) {
+		const entryId = id();
+
+		pseudoClips[entryId] = clip;
+
+		const duration = 750;
+		let t = 0;
+
+		const startX = clip.x;
+		const startY = clip.y;
+
+		const startRotation = clip.rotation ?? 0;
+
+		const startOffsetWidthPercent = clip.rotateCenterX / clip.width;
+		const grabOffsetFromCenter = startOffsetWidthPercent - 0.5;
+
+		const rotationVelocity = (Math.random() * 2 + 1) * 40 * -grabOffsetFromCenter;
+
+		const horizontalVelocity = (Math.random() * 2 - 1) * 40;
+
+		const gravity = 1200;
+
+		const stop = onAnimationFrame((dt) => {
+			t += dt;
+
+			const seconds = t / 1000;
+			const progress = Math.min(1, t / duration);
+
+			const eased = 1 - Math.pow(1 - progress, 3);
+
+			const x = startX + horizontalVelocity * seconds;
+			const y = startY + 0.5 * gravity * seconds * seconds;
+			const rotation = startRotation + rotationVelocity * seconds;
+			const opacity = 1 - eased;
+
+			pseudoClips[entryId] = {
+				...clip,
+				x,
+				y,
+				rotation,
+				opacity
+			};
+
+			if (progress >= 1) {
+				delete pseudoClips[entryId];
+				stop();
+			}
+		});
+	}
 
 	const s = writable<Record<string, any>>();
 
@@ -815,7 +866,7 @@
 			case clipType.image:
 				return {
 					type: clipType.image,
-					duration: 1,
+					duration: 10,
 					id: id(),
 					start: 0,
 					track: '',
@@ -846,17 +897,11 @@
 	}
 
 	function getClipBounds(clip: TimelineClip, updator?: any) {
-		const scrollLeft = getScrollLeft(updator);
-		const width = getContainerWidth(updator);
+		const left = getTimestampAtScreenX(0);
+		const right = getTimestampAtScreenX(getContainerWidth(updator));
 		return {
-			left: {
-				px: scrollLeft,
-				seconds: scrollLeft / zoom
-			},
-			right: {
-				px: scrollLeft + width,
-				seconds: (scrollLeft + width) / zoom
-			}
+			leftSeconds: left,
+			rightSeconds: right
 		};
 	}
 
@@ -868,7 +913,7 @@
 		const offset = rect.x + getScrollLeft();
 		timelineLeftPad = offset;
 		await projects.refresh();
-		await projects.openBlank();
+		await projects.open((await promptFor('textInputPrompt', { title: 'project' })).value ?? '');
 		nameInputValue = projects.current;
 	});
 	let pendingRename = $state(false);
@@ -1169,7 +1214,7 @@
 											floating: false
 										};
 
-										const nameWidth = measureText(asset.name)?.width ?? 200;
+										const nameWidth = (measureText(asset.name)?.width ?? 200) + 26;
 
 										let xEase = 0.25;
 										let yEase = 0.25;
@@ -1279,7 +1324,7 @@
 
 											draggedClip.floating = mode === 'floating';
 
-											const timestamp = getTimestampScreenX(
+											const timestamp = getTimestampAtScreenX(
 												$mouseX - draggedClip.width * startOffsetWidthPercent
 											);
 
@@ -1294,11 +1339,12 @@
 											stopDragging();
 											const mouseTrack = getTrackAtMouse();
 											if (!mouseTrack) {
+												fadeClip(draggedClip);
 												draggedClipId = null;
 												deleteClipById(clip.id);
 												return;
 											}
-											const timestamp = getTimestampScreenX(
+											const timestamp = getTimestampAtScreenX(
 												$mouseX - draggedClip.width * startOffsetWidthPercent
 											);
 											setClipById(clip.id, {
@@ -1548,8 +1594,6 @@
 															floating: false
 														};
 
-														let text = getText();
-
 														function getText() {
 															switch (clipData.type) {
 																case clipType.image:
@@ -1564,7 +1608,7 @@
 															}
 														}
 
-														const nameWidth = measureText(text)?.width ?? 200;
+														const nameWidth = (measureText(getText())?.width ?? 200) + 26;
 														const floatingHeight = 40;
 
 														let xEase = 1;
@@ -1656,12 +1700,25 @@
 
 														onMouseUp(() => {
 															const mouseTrack = getTrackAtMouse();
-															setClipById(clipData.id, {
-																track: mouseTrack?.track.id ?? startTrack,
-																start: !mouseTrack?.track.id
-																	? startStart
-																	: getTimestampAtMouse() - offsetSeconds
-															});
+															// todo setting
+															if (true) {
+																if (mouseTrack) {
+																	setClipById(clipData.id, {
+																		track: mouseTrack?.track.id,
+																		start: getTimestampAtMouse() - offsetSeconds
+																	});
+																} else {
+																	deleteClipById(clipData.id);
+																	fadeClip(draggedClip);
+																}
+															} else {
+																setClipById(clipData.id, {
+																	track: mouseTrack?.track.id ?? startTrack,
+																	start: !mouseTrack?.track.id
+																		? startStart
+																		: getTimestampAtMouse() - offsetSeconds
+																});
+															}
 															clipLogger('stopped dragging');
 															stopDragging();
 															draggedClipId = null;
@@ -1847,6 +1904,35 @@
 			<Clip clip={draggedClip.data} />
 		</div>
 	{/if}
+
+	{#each Object.values(pseudoClips) as draggedClip (draggedClip.data.id)}
+		<div
+			class="pointer-events-none absolute z-80"
+			style="
+					top:{draggedClip.y}px;
+		    	left:{draggedClip.x}px;
+	       	height:{draggedClip.height}px;
+		     	width:{draggedClip.width}px;
+		    	rotate:{draggedClip.rotation}deg;
+					transform-origin:{draggedClip.rotateCenterX}px {draggedClip.rotateCenterY}px;
+					opacity: {draggedClip.opacity}
+			"
+			in:receive={{ key: draggedClip.data.id, duration: 0 }}
+			out:send={{ key: draggedClip.data.id }}
+			onwheel={(e: any) => {
+				e.preventDefault();
+				if (e.ctrlKey) {
+					handleWheel(e);
+					return;
+				}
+				setScrollLeft(getScrollLeft() + e.deltaY + e.deltaX);
+				lastUserScrollTime = performance.now();
+				userScrolling = true;
+			}}
+		>
+			<Clip clip={draggedClip.data} />
+		</div>
+	{/each}
 
 	<div
 		class="pointer-events-none absolute bottom-0 left-0 flex w-full flex-col items-center justify-end"

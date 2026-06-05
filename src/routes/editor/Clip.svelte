@@ -5,7 +5,7 @@
 	import ImageClip from './clips/ImageClip.svelte';
 	import VideoClip from './clips/VideoClip.svelte';
 
-	type Props = { clip: TimelineClip; inTimeline?: boolean; zoom?: number; bounds?: ClipBounds };
+	type Props = { clip: TimelineClip; inTimeline?: boolean; zoom?: number; bounds?: ScreenBounds };
 	let { clip, inTimeline = false, zoom, bounds }: Props = $props();
 </script>
 
@@ -15,8 +15,6 @@
   filter: drop-shadow(0px 0px 2px var(--background));
   "
 >
-	{clip.start}
-	{inTimeline}
 	{#if clip.type === clipType.image}
 		<!-- <div class="flex aspect-square h-full w-auto items-center justify-center">
 			<img src={asset?.previewUrl} alt="" class="h-full w-auto rounded-sm" />

@@ -3,7 +3,7 @@
 	import type { TimelineClip, VideoClip } from '$lib/media/types';
 	import { onMount } from 'svelte';
 
-	type Props = { clip: VideoClip; inTimeline?: boolean; zoom?: number; bounds?: ClipBounds };
+	type Props = { clip: VideoClip; inTimeline?: boolean; zoom?: number; bounds?: ScreenBounds };
 	let { clip, inTimeline = false, bounds, zoom = 100 }: Props = $props();
 
 	onMount(async () => {
@@ -22,7 +22,7 @@
 <div class="absolute h-full w-full overflow-hidden rounded-sm">
 	<div
 		style:margin-left="{Math.max(
-			bounds?.left.seconds !== undefined ? (bounds?.left.seconds - clip.start) * zoom - 58 : 0,
+			bounds !== undefined ? (bounds.leftSeconds - clip.start) * zoom : 0,
 			4
 		)}px"
 		class="flex h-full w-full items-center"

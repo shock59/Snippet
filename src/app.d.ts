@@ -12,15 +12,9 @@ declare global {
 		width: number;
 		height: number;
 	};
-	declare type ClipBounds = {
-		left: {
-			px: number;
-			seconds: number;
-		};
-		right: {
-			px: number;
-			seconds: number;
-		};
+	declare type ScreenBounds = {
+		leftSeconds: number;
+		rightSeconds: number;
 	};
 }
 

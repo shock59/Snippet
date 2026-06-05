@@ -13,7 +13,7 @@
 	const barOut = 100;
 	const waveformPps = 100;
 
-	type Props = { clip: AudioClip; inTimeline?: boolean; zoom?: number; bounds?: ClipBounds };
+	type Props = { clip: AudioClip; inTimeline?: boolean; zoom?: number; bounds?: ScreenBounds };
 	let { clip, inTimeline = false, zoom = 100, bounds }: Props = $props();
 
 	let containerEl: HTMLDivElement | null = $state(null);
@@ -321,7 +321,7 @@
 		class="{!clip.name ? 'italic' : ''} rounded-md bg-popover/50 px-2 text-nowrap whitespace-nowrap"
 		// style:margin-left="{scalenum((bounds?.left.seconds ?? 0), 10, 40, 2, 400, false, 'ease-out')}px" <- completely fucking broken lmfao
 		style:margin-left="{Math.max(
-			bounds?.left.seconds !== undefined ? (bounds?.left.seconds - clip.start) * zoom - 58 : 0,
+			bounds !== undefined ? (bounds.leftSeconds - clip.start) * zoom : 0,
 			4
 		)}px"
 	>
