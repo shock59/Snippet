@@ -190,7 +190,7 @@ export async function render(
 		clips: clips.length
 	});
 
-	await OPFS.delete('/render');
+	await OPFS.delete('/render').catch(() => {});
 
 	const writer = await OPFS.writer('/render');
 

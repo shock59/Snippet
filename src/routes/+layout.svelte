@@ -3,7 +3,14 @@
 	import favicon from '$lib/assets/favicon.svg';
 	import { ModeWatcher, toggleMode } from 'mode-watcher';
 	import Prompter from '$lib/PopupManager.svelte';
-	import { debuggerOpen, mouseUpCallbacks, mouseX, mouseY } from '$lib/globals';
+	import {
+		__onMouseMove,
+		cursor,
+		debuggerOpen,
+		mouseUpCallbacks,
+		mouseX,
+		mouseY
+	} from '$lib/globals';
 	import DebugWindow from '$lib/debug/DebugWindow.svelte';
 	import { browser } from '$app/environment';
 	import { createLogger } from '$lib/debug';
@@ -42,6 +49,8 @@
 	});
 </script>
 
+<svelte:body />
+
 <Prompter />
 <ModeWatcher />
 {@render children()}
@@ -49,8 +58,7 @@
 <svelte:head><link rel="icon" href={favicon} /></svelte:head>
 <svelte:window
 	onmousemove={(e) => {
-		mouseX.set(e.clientX);
-		mouseY.set(e.clientY);
+		__onMouseMove(e);
 	}}
 	onmouseup={() => {
 		while (mouseUpCallbacks.length) {

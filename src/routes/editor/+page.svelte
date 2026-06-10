@@ -19,12 +19,21 @@
 		Download,
 		Clapperboard,
 		MousePointer2,
-		TextCursor
+		TextCursor,
+		Folders
 	} from '@lucide/svelte';
 	import SnippetIconAnimated from '$lib/components/SnippetIconAnimated.svelte';
 	import promptFor from '$lib/popups';
 	import { writable } from 'svelte/store';
-	import { mouseX, mouseY, onMouseUp, registerState } from '$lib/globals';
+	import {
+		mouseX,
+		mouseXMomentum,
+		mouseY,
+		mouseYMomentum,
+		onMouseUp,
+		registerState,
+		setCursor
+	} from '$lib/globals';
 	import { createLogger } from '$lib/debug';
 	import { crossfade } from 'svelte/transition';
 	import { clipType, type MediaAsset, type TimelineClip } from '$lib/media/types';
@@ -587,8 +596,8 @@
 	const clips: TimelineClip[] = $state([]);
 
 	const canvasDimensions: Dimensions = $state({
-		width: 2176,
-		height: 1440
+		width: 1920,
+		height: 1080
 	});
 	5;
 	let loading = $state(true);
@@ -713,14 +722,17 @@
 
 	const pseudoClips: Record<string, typeof draggedClip> = $state({});
 
-	function fadeClip(clip: typeof draggedClip) {
+	function throwClipAcrossScreenReallyCoolAmazing(clip: typeof draggedClip) {
 		const entryId = id();
 
 		pseudoClips[entryId] = clip;
 
-		const duration = 750;
-		let t = 0;
+		const mx = $mouseXMomentum * 1000;
+		const my = $mouseYMomentum * 1000;
 
+		const duration = 10750;
+		let t = 0;
+		let rt = 0;
 		const startX = clip.x;
 		const startY = clip.y;
 
@@ -729,13 +741,32 @@
 		const startOffsetWidthPercent = clip.rotateCenterX / clip.width;
 		const grabOffsetFromCenter = startOffsetWidthPercent - 0.5;
 
-		const rotationVelocity = (Math.random() * 2 + 1) * 40 * -grabOffsetFromCenter;
+		const rotationVelocity = (Math.random() * 2 + 1) * 40 * (grabOffsetFromCenter * (my / 200));
 
-		const horizontalVelocity = (Math.random() * 2 - 1) * 40;
+		const horizontalVelocity = mx + (Math.random() * 80 - 40);
 
-		const gravity = 1200;
+		const initialVerticalVelocity = my;
+
+		const gravity = 2000;
+
+		const theta = (startRotation * Math.PI) / 180;
+
+		const dx = clip.width / 2 - clip.rotateCenterX;
+		const dy = clip.height / 2 - clip.rotateCenterY;
+
+		clip.x += dx * (Math.cos(theta) - 1) - dy * Math.sin(theta);
+		clip.y -= dx * Math.sin(theta) + dy * (Math.cos(theta) - 1);
+
+		clip.rotateCenterX = clip.width / 2;
+		clip.rotateCenterY = clip.height / 2;
+
+		let last = 0;
 
 		const stop = onAnimationFrame((dt) => {
+			rt += dt;
+			if (rt - 0 > last) {
+				last = rt;
+			} else return;
 			t += dt;
 
 			const seconds = t / 1000;
@@ -744,10 +775,17 @@
 			const eased = 1 - Math.pow(1 - progress, 3);
 
 			const x = startX + horizontalVelocity * seconds;
-			const y = startY + 0.5 * gravity * seconds * seconds;
+			// const x = 500,
+			// 	y = 500,
+			// 	rotation = 90 * 8;
+			const y = startY + initialVerticalVelocity * seconds + 0.5 * gravity * seconds * seconds;
 			const rotation = startRotation + rotationVelocity * seconds;
-			const opacity = 1 - eased;
+			const opacity = (1 - eased) * 20;
 
+			if (!pseudoClips[entryId]) {
+				stop();
+				return;
+			}
 			pseudoClips[entryId] = {
 				...clip,
 				x,
@@ -800,7 +838,9 @@
 			userScrolling,
 			mouse: {
 				x: $mouseX,
-				y: $mouseY
+				y: $mouseY,
+				$mouseXMomentum,
+				$mouseYMomentum
 			},
 			clipState: {
 				draggedClip
@@ -913,7 +953,7 @@
 		const offset = rect.x + getScrollLeft();
 		timelineLeftPad = offset;
 		await projects.refresh();
-		await projects.open((await promptFor('textInputPrompt', { title: 'project' })).value ?? '');
+		await projects.open('untitled 2');
 		nameInputValue = projects.current;
 	});
 	let pendingRename = $state(false);
@@ -977,6 +1017,9 @@
 			<div class="flex aspect-square h-full w-auto items-center justify-center">
 				<SnippetIcon size="95%" />
 			</div>
+			<Button size="icon-sm" variant="ghost">
+				<Folders />
+			</Button>
 			<Input
 				bind:value={nameInputValue}
 				disabled={pendingRename}
@@ -1214,6 +1257,8 @@
 											floating: false
 										};
 
+										const resetCursor = setCursor('grabbing');
+
 										const nameWidth = (measureText(asset.name)?.width ?? 200) + 26;
 
 										let xEase = 0.25;
@@ -1336,10 +1381,11 @@
 										clips.push(clip);
 
 										onMouseUp(() => {
+											resetCursor();
 											stopDragging();
 											const mouseTrack = getTrackAtMouse();
 											if (!mouseTrack) {
-												fadeClip(draggedClip);
+												throwClipAcrossScreenReallyCoolAmazing(draggedClip);
 												draggedClipId = null;
 												deleteClipById(clip.id);
 												return;
@@ -1581,6 +1627,7 @@
 														const clipWidth = clipData.duration * zoom;
 														const startOffsetWidthPercent = offset / clipWidth;
 														const grabOffsetFromCenter = startOffsetWidthPercent - 0.5;
+														const resetCursor = setCursor('grabbing');
 
 														draggedClip = {
 															data: clipData,
@@ -1701,6 +1748,7 @@
 														onMouseUp(() => {
 															const mouseTrack = getTrackAtMouse();
 															// todo setting
+															resetCursor();
 															if (true) {
 																if (mouseTrack) {
 																	setClipById(clipData.id, {
@@ -1709,7 +1757,7 @@
 																	});
 																} else {
 																	deleteClipById(clipData.id);
-																	fadeClip(draggedClip);
+																	throwClipAcrossScreenReallyCoolAmazing(draggedClip);
 																}
 															} else {
 																setClipById(clipData.id, {
@@ -1905,32 +1953,178 @@
 		</div>
 	{/if}
 
-	{#each Object.values(pseudoClips) as draggedClip (draggedClip.data.id)}
+	{#each Object.entries(pseudoClips) as [k, pClip] (pClip.data.id)}
 		<div
-			class="pointer-events-none absolute z-80"
+			class="absolute z-80 cursor-grab"
 			style="
-					top:{draggedClip.y}px;
-		    	left:{draggedClip.x}px;
-	       	height:{draggedClip.height}px;
-		     	width:{draggedClip.width}px;
-		    	rotate:{draggedClip.rotation}deg;
-					transform-origin:{draggedClip.rotateCenterX}px {draggedClip.rotateCenterY}px;
-					opacity: {draggedClip.opacity}
+					top:{pClip.y}px;
+		    	left:{pClip.x}px;
+	       	height:{pClip.height}px;
+		     	width:{pClip.width}px;
+		    	rotate:{pClip.rotation}deg;
+					transform-origin:{pClip.rotateCenterX}px {pClip.rotateCenterY}px;
+					opacity: {pClip.opacity}
 			"
-			in:receive={{ key: draggedClip.data.id, duration: 0 }}
-			out:send={{ key: draggedClip.data.id }}
-			onwheel={(e: any) => {
-				e.preventDefault();
-				if (e.ctrlKey) {
-					handleWheel(e);
-					return;
-				}
-				setScrollLeft(getScrollLeft() + e.deltaY + e.deltaX);
-				lastUserScrollTime = performance.now();
-				userScrolling = true;
+			onmousedown={(e) => {
+				e.stopPropagation();
+
+				const clip = pClip.data;
+
+				const startX = pClip.x;
+				const startY = pClip.y;
+				const startWidth = pClip.width;
+				const startHeight = pClip.height;
+				const normalizeAngle = (angle: number) => ((((angle + 180) % 360) + 360) % 360) - 180;
+				const startRotation = normalizeAngle(pClip.rotation);
+
+				const rotateCenterScreenX = startX + pClip.rotateCenterX;
+				const rotateCenterScreenY = startY + pClip.rotateCenterY;
+
+				const dx = $mouseX - rotateCenterScreenX;
+				const dy = $mouseY - rotateCenterScreenY;
+
+				const rad = (startRotation * Math.PI) / 180;
+				const cos = Math.cos(-rad);
+				const sin = Math.sin(-rad);
+				const localX = dx * cos - dy * sin;
+				const localY = dx * sin + dy * cos;
+
+				const mouseOffsetX = localX + pClip.rotateCenterX;
+				const mouseOffsetY = localY + pClip.rotateCenterY;
+				const startOffsetWidthPercent = mouseOffsetX / startWidth;
+				const grabOffsetFromCenter = startOffsetWidthPercent - 0.5;
+				const grabOffsetFromCenterY = mouseOffsetY / startHeight - 0.5;
+
+				delete pseudoClips[k];
+
+				clip.start = Number.MIN_SAFE_INTEGER;
+				clip.track = 'secret';
+				clips.push(clip);
+
+				draggedClip = {
+					data: clip,
+					x: startX,
+					y: startY,
+					width: startWidth,
+					height: startHeight,
+					rotation: startRotation,
+					rotateCenterX: mouseOffsetX,
+					rotateCenterY: mouseOffsetY,
+					floating: true
+				};
+				draggedClipId = clip.id;
+
+				const resetCursor = setCursor('grabbing');
+
+				const clipName = (() => {
+					switch (clip.type) {
+						case clipType.image:
+						case clipType.audio:
+						case clipType.video:
+							return clip.name ?? media.assets[clip.assetId ?? 0]?.name ?? 'Clip';
+						case clipType.text:
+							return clip.name ?? clip.text ?? 'Text';
+						case clipType.solid:
+							return clip.name ?? `Color ${clip.color}`;
+						default:
+							return 'Clip';
+					}
+				})();
+				const nameWidth = (measureText(clipName)?.width ?? 200) + 26;
+				const floatingHeight = 40;
+
+				let xEase = 1;
+				let yEase = 1;
+				let widthEase = 1;
+				let heightEase = 1;
+
+				let omega = 0;
+				let theta = startRotation;
+				let prevMouseX = $mouseX;
+				let prevMouseY = $mouseY;
+
+				const baseAngle = -grabOffsetFromCenter * 18 * (1 + grabOffsetFromCenterY * 0.2);
+				const offsetSeconds = startOffsetWidthPercent * clip.duration;
+
+				const updateEase = (current: number, target: number, rampUp = 0.1, rampDown = 1) =>
+					current + (target - current) * (target < current ? rampDown : rampUp);
+
+				const stopDragging = onAnimationFrame(() => {
+					const mouseTrack = getTrackAtMouse();
+					const mode = mouseTrack ? 'track' : 'floating';
+
+					const dX = $mouseX - prevMouseX;
+					const dY = $mouseY - prevMouseY;
+					prevMouseX = $mouseX;
+					prevMouseY = $mouseY;
+
+					const widthScale = widthNorm / Math.max(draggedClip.width, 40);
+
+					if (mode === 'floating') {
+						const torqueX = dX * drive * widthScale;
+						const torqueY = dY * grabOffsetFromCenter * drive * widthScale;
+						omega += torqueX + torqueY * 6;
+						omega -= (theta - baseAngle) * restoring;
+						omega *= damp;
+					} else {
+						omega *= 0.01;
+						omega -= theta * 0.18;
+						omega *= damp;
+					}
+
+					theta += omega;
+					draggedClip.rotation = theta;
+
+					const targetX = $mouseX - draggedClip.width * startOffsetWidthPercent;
+					const targetY =
+						mode === 'track'
+							? mouseTrack!.screenY + 4
+							: $mouseY - mouseOffsetY * (floatingHeight / startHeight);
+					const targetWidth =
+						mode === 'track' ? draggedClip.data.duration * zoom : nameWidth + floatingHeight + 15;
+					const targetHeight = mode === 'track' ? mouseTrack!.track.height - 8 : floatingHeight;
+
+					xEase = updateEase(xEase, 1);
+					yEase = updateEase(yEase, mode === 'track' ? 0.3 : 1);
+					widthEase = updateEase(widthEase, mode === 'track' ? 0.3 : 0.2);
+					heightEase = updateEase(heightEase, mode === 'track' ? 0.3 : 0.2);
+
+					draggedClip.x += (targetX - draggedClip.x) * xEase;
+					draggedClip.y += (targetY - draggedClip.y) * yEase;
+					draggedClip.width += (targetWidth - draggedClip.width) * widthEase;
+					draggedClip.height += (targetHeight - draggedClip.height) * heightEase;
+
+					draggedClip.rotateCenterX = $mouseX - draggedClip.x;
+					draggedClip.rotateCenterY = $mouseY - draggedClip.y;
+					draggedClip.floating = mode === 'floating';
+
+					draggedClipId = clip.id;
+
+					setClipById(clip.id, {
+						track: mouseTrack?.track.id ?? 'secret',
+						start: mouseTrack ? getTimestampAtMouse() - offsetSeconds : Number.MIN_SAFE_INTEGER
+					});
+				});
+
+				onMouseUp(() => {
+					resetCursor();
+					stopDragging();
+					const mouseTrack = getTrackAtMouse();
+					if (!mouseTrack) {
+						throwClipAcrossScreenReallyCoolAmazing(draggedClip);
+						draggedClipId = null;
+						deleteClipById(clip.id);
+						return;
+					}
+					setClipById(clip.id, {
+						track: mouseTrack.track.id,
+						start: getTimestampAtMouse() - offsetSeconds
+					});
+					draggedClipId = null;
+				});
 			}}
 		>
-			<Clip clip={draggedClip.data} />
+			<Clip clip={pClip.data} />
 		</div>
 	{/each}
 

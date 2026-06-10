@@ -20,6 +20,11 @@
 		y?: AxisPosition;
 
 		class?: string;
+		ref?: HTMLDivElement | null;
+
+		style?: string;
+
+		vars?: Record<string, string | number>;
 	};
 
 	let {
@@ -33,7 +38,10 @@
 		center,
 		x,
 		y,
-		class: classn
+		class: classn,
+		ref = $bindable(),
+		vars,
+		style
 	}: Props = $props();
 
 	const flexDirection = $derived(
@@ -78,6 +86,7 @@
 </script>
 
 <div
+	bind:this={ref}
 	class={classn}
 	style={`
 		display: flex;
@@ -85,6 +94,10 @@
 		${gapValue ? `gap: ${gapValue};` : ''}
 		${justifyContent ? `justify-content: ${justifyContent};` : ''}
 		${alignItems ? `align-items: ${alignItems};` : ''}
+		${Object.entries(vars ?? {})
+			.map(([k, v]) => `--${k}:${v};`)
+			.join('')}
+		${style}
 	`}
 >
 	{@render children?.()}
